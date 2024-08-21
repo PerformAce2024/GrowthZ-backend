@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { MongoClient } from 'mongodb';
+import { PythonShell } from 'python-shell';
 import 'dotenv/config';
 // import * as tf from '@tensorflow/tfjs-node';
 
@@ -24,25 +25,49 @@ const client = new MongoClient(uri, {
 const dbName = 'Images';
 const urlsCollectionName = 'URLs';
 
+// Function to run Python script using PythonShell
+async function runPythonScript(scriptName, args) {
+  return new Promise((resolve, reject) => {
+    PythonShell.run(scriptName, { args: args, scriptPath: __dirname }, (err, results) => {
+      if (err) {
+        return reject(`Python error: ${err}`);
+      }
+      resolve(results);
+    });
+  });
+}
+
 // Function to download an image from a URL and save it locally
 async function downloadImage(url, outputPath) {
   const response = await fetch(url);
-  const buffer = await response.buffer();
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);  // Convert ArrayBuffer to Buffer
   fs.writeFileSync(outputPath, buffer);
   console.log(`Downloaded image to ${outputPath}`);
 }
 
-// // Predict the font style using the image
-async function predictFontStyle(imagePath) {
-  return new Promise((resolve, reject) => {
-      PythonShell.run('font_style_predict.py', { args: [imagePath, modelPath] }, function (err, results) {
-          if (err) reject(err);
-          resolve(results[0]); // Font style prediction result
-      });
-  });
+// // // Predict the font style using the image
+// async function predictFontStyle(imagePath) {
+//   return new Promise((resolve, reject) => {
+//       PythonShell.run('font_style_predict.py', { args: [imagePath, modelPath] }, function (err, results) {
+//           if (err) reject(err);
+//           resolve(results[0]); // Font style prediction result
+//       });
+//   });
+// }
+
+// Function to get font style
+async function getFontStyle(imagePath, modelPath) {
+  try {
+    const result = await runPythonScript('font_style_predict.py', [imagePath, modelPath]);
+    return result[0]; // Assuming the Python script returns the font style as the first result
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
 }
 
-// Fetch USP phrase
+// Function to fetch USP phrase
 async function fetchPhrase(googlePlayUrl, appleAppUrl) {
   try {
     const response = await fetch('http://localhost:8000/generate-phrases', {
@@ -140,10 +165,16 @@ async function fetchAllImageData() {
 async function createAdImage(imageData, phrase, index) {
   try {
     // Download the original image locally
-    const localImagePath = path.join(__dirname, 'downloaded_image_${index}.png');
+    const localImagePath = path.join(__dirname, `downloaded_image_${index}.png`);
     await downloadImage(imageData.url, localImagePath);
+    console.log(`Image downloaded to: ${localImagePath}`);
 
+    const modelPath = path.join(__dirname, 'font_classifier_model.h5');
+ 
     // Get the background color from the Python script
+    const fontStyle = await getFontStyle(localImagePath, modelPath);
+    console.log(`Font style predicted: ${fontStyle}`);
+    
     let backgroundColor = await getBackgroundColor(localImagePath);
     console.log(`YES!! Background color is: ${backgroundColor}`);
 
@@ -157,6 +188,10 @@ async function createAdImage(imageData, phrase, index) {
     // // Map the detected font style to the font family in Canvas (Adjust as needed)
     // const fontFamily = fontStyle || 'Arial';
 
+    // // Get the predicted font style from the Python script
+    // const modelPath = path.join(__dirname, 'font_classifier_model.h5');  // Specify the correct path to your model
+    // const predictedFontStyle = await getFontStyle(localImagePath, modelPath);
+    // console.log(`Predicted font style is: ${predictedFontStyle}`);
     
     /// Create a canvas
     const width = 333;
@@ -184,7 +219,7 @@ async function createAdImage(imageData, phrase, index) {
 
     // Calculate font size based on phrase length
     const fontSize = calculateFontSize(ctx, phrase, width - 40);
-    ctx.font = `${fontSize}px Metropolis`;
+    ctx.font = `${fontSize}px ${fontStyle}`;
     ctx.fillStyle = 'black';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
